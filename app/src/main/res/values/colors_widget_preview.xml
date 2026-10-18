@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+
+<resources>
+    <color name="wp_background">#FFF3EDF7</color>
+    <color name="wp_surface">#FFFFFBFE</color>
+    <color name="wp_primary">#FFE4022C</color>
+    <color name="wp_on_surface">#FF1C1B1F</color>
+    <color name="wp_on_surface_variant">#FF49454F</color>
+    <color name="wp_track">#FFE8DEF8</color>
+    <color name="wp_wash_blue">#2E42A5F5</color>
+    <color name="wp_wash_red">#2EEF5350</color>
+    <color name="wp_blue">#FF42A5F5</color>
+    <color name="wp_red">#FFEF5350</color>
+</resources>

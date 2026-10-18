@@ -1,0 +1,15 @@
+
+# reference clones — pulled fresh via SKETCH.md, not committed (repos + large binaries)
+/reference/
+
+# Build output and local tooling state
+/build/
+/app/build/
+/.gradle/
+/.kotlin/
+local.properties
+*.hprof
+
+# Signing keys never go in the repo.
+*.jks
+*.keystore

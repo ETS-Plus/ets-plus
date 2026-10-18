@@ -1,0 +1,92 @@
+package app.etsprivate.transit
+
+data class MetroStation(val name: String, val lat: Double, val lng: Double) {
+    val point: LatLng get() = LatLng(lat, lng)
+}
+
+val METRO_STATIONS: List<MetroStation> = listOf(
+    MetroStation("Acadie", 45.52322, -73.62375),
+    MetroStation("Angrignon", 45.44623, -73.60361),
+    MetroStation("Anse-à-l'Orme", 45.43159, -73.90991),
+    MetroStation("Assomption", 45.56939, -73.54673),
+    MetroStation("Atwater", 45.48968, -73.58631),
+    MetroStation("Beaubien", 45.53517, -73.60496),
+    MetroStation("Beaudry", 45.51955, -73.55717),
+    MetroStation("Berri-UQAM", 45.51511, -73.56108),
+    MetroStation("Bonaventure", 45.49819, -73.56696),
+    MetroStation("Cadillac", 45.57684, -73.5467),
+    MetroStation("Cartier", 45.56023, -73.6818),
+    MetroStation("Champ-de-Mars", 45.51014, -73.55649),
+    MetroStation("Charlevoix", 45.47825, -73.56937),
+    MetroStation("Crémazie", 45.54614, -73.63884),
+    MetroStation("Côte-Sainte-Catherine", 45.49237, -73.63286),
+    MetroStation("Côte-Vertu", 45.51429, -73.68328),
+    MetroStation("Côte-des-Neiges", 45.49665, -73.62349),
+    MetroStation("De Castelnau", 45.53526, -73.62011),
+    MetroStation("De La Savane", 45.50038, -73.6616),
+    MetroStation("De l'Église", 45.46269, -73.56701),
+    MetroStation("De la Concorde", 45.56085, -73.70974),
+    MetroStation("Deux-Montagnes", 45.54568, -73.91241),
+    MetroStation("Du Collège", 45.50846, -73.67283),
+    MetroStation("D’Iberville", 45.5526, -73.6027),
+    MetroStation("Fabre", 45.54675, -73.6078),
+    MetroStation("Frontenac", 45.53315, -73.55222),
+    MetroStation("Georges-Vanier", 45.48895, -73.57646),
+    MetroStation("Grand-Moulin", 45.53725, -73.88788),
+    MetroStation("Guy-Concordia", 45.49535, -73.57981),
+    MetroStation("Henri-Bourassa", 45.55451, -73.66825),
+    MetroStation("Honoré-Beaugrand", 45.59641, -73.53544),
+    MetroStation("Jarry", 45.54322, -73.6286),
+    MetroStation("Jean-Drapeau", 45.51245, -73.53313),
+    MetroStation("Jean-Talon", 45.53918, -73.61342),
+    MetroStation("Jolicoeur", 45.45676, -73.58204),
+    MetroStation("Joliette", 45.54689, -73.55113),
+    MetroStation("Kirkland", 45.44031, -73.88561),
+    MetroStation("LaSalle", 45.47081, -73.56613),
+    MetroStation("Langelier", 45.58273, -73.54316),
+    MetroStation("Laurier", 45.52808, -73.58838),
+    MetroStation("Longueuil–Université-de-Sherbrooke", 45.52493, -73.52193),
+    MetroStation("Lucien-L'Allier", 45.49501, -73.57095),
+    MetroStation("McGill", 45.50409, -73.57157),
+    MetroStation("Monk", 45.45104, -73.5932),
+    MetroStation("Mont-Royal", 45.5246, -73.58165),
+    MetroStation("Montmorency", 45.55835, -73.72152),
+    MetroStation("Namur", 45.49493, -73.65291),
+    MetroStation("Outremont", 45.52011, -73.61489),
+    MetroStation("Papineau", 45.52374, -73.55217),
+    MetroStation("Parc", 45.53042, -73.62452),
+    MetroStation("Peel", 45.50061, -73.57509),
+    MetroStation("Pie IX", 45.5542, -73.5515),
+    MetroStation("Pierrefonds-Roxboro", 45.5102, -73.81163),
+    MetroStation("Place Saint-Henri", 45.47739, -73.58638),
+    MetroStation("Place d’Armes", 45.50609, -73.55961),
+    MetroStation("Place-des-Arts", 45.50804, -73.56834),
+    MetroStation("Plamondon", 45.49437, -73.63793),
+    MetroStation("Préfontaine", 45.54173, -73.55424),
+    MetroStation("Radisson", 45.58965, -73.53979),
+    MetroStation("Rosemont", 45.5315, -73.59734),
+    MetroStation("Saint-Laurent", 45.51092, -73.56482),
+    MetroStation("Saint-Michel", 45.55975, -73.59996),
+    MetroStation("Sainte-Dorothée", 45.52346, -73.86247),
+    MetroStation("Sauvé", 45.5511, -73.65651),
+    MetroStation("Sherbrooke", 45.51872, -73.56805),
+    MetroStation("Snowdon", 45.48567, -73.62835),
+    MetroStation("Square-Victoria-OACI", 45.50209, -73.56311),
+    MetroStation("Station Lionel-Groulx", 45.48231, -73.58047),
+    MetroStation("Sunnybrooke", 45.50384, -73.7857),
+    MetroStation("Université-de-Montréal", 45.50344, -73.61758),
+    MetroStation("Vendôme", 45.47389, -73.60383),
+    MetroStation("Verdun", 45.45929, -73.57201),
+    MetroStation("Viau", 45.56111, -73.54731),
+    MetroStation("Villa-Maria", 45.47976, -73.61976),
+    MetroStation("Édouard-Montpetit", 45.51013, -73.61253),
+)
+
+fun stationsAlong(points: List<LatLng>, withinMeters: Double = 120.0): List<MetroStation> =
+    METRO_STATIONS
+        .mapNotNull { station ->
+            val off = points.minOfOrNull { distanceMeters(it, station.point) } ?: return@mapNotNull null
+            if (off > withinMeters) null else station to alongMeters(points, station.point)
+        }
+        .sortedBy { it.second }
+        .map { it.first }

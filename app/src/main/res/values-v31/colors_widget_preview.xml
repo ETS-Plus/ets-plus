@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="wp_background">@android:color/system_accent2_50</color>
+    <color name="wp_surface">@android:color/system_neutral1_10</color>
+    <color name="wp_primary">@android:color/system_accent1_600</color>
+    <color name="wp_on_surface">@android:color/system_neutral1_900</color>
+    <color name="wp_on_surface_variant">@android:color/system_neutral2_700</color>
+    <color name="wp_track">@android:color/system_accent2_100</color>
+</resources>

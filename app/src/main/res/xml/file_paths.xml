@@ -1,0 +1,9 @@
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="attachments" path="attachments/" />
+    <cache-path name="shared" path="shared/" />
+    <cache-path name="update" path="update/" />
+
+    <files-path name="rides" path="rides/" />
+
+    <external-files-path name="rides-external" path="rides/" />
+</paths>
