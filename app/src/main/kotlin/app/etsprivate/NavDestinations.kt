@@ -63,7 +63,7 @@ enum class NavDestination(
     }
 
     companion object {
-        val DEFAULT = listOf(ETS, MAIL, SETTINGS)
+        val DEFAULT = listOf(ETS, SCHEDULE, MAIL, SETTINGS)
 
         const val MAX = 5
 

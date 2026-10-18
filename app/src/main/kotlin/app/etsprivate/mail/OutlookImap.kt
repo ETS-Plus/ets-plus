@@ -36,6 +36,24 @@ data class MailAddress(val name: String, val address: String) {
 
 data class MailAttachment(val filename: String, val mimeType: String, val sizeBytes: Long, val path: String)
 
+internal fun fileType(name: String, given: String?): String {
+    val type = given.orEmpty().substringBefore(';').trim().lowercase()
+    if (type.isNotBlank() && type != "application/octet-stream" && type != "application/force-download") return type
+    val extension = name.substringAfterLast('.', "").lowercase()
+    return TEXT_EXTENSIONS[extension]
+        ?: android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+        ?: "application/octet-stream"
+}
+
+private val TEXT_EXTENSIONS = mapOf(
+    "md" to "text/markdown", "markdown" to "text/markdown", "json" to "application/json",
+    "log" to "text/plain", "csv" to "text/csv", "yaml" to "application/yaml", "yml" to "application/yaml",
+    "toml" to "application/toml", "ini" to "text/plain", "cfg" to "text/plain", "conf" to "text/plain",
+    "kt" to "text/x-kotlin", "py" to "text/x-python", "java" to "text/x-java", "c" to "text/x-c",
+    "h" to "text/x-c", "cpp" to "text/x-c++", "js" to "application/javascript", "ts" to "text/x-typescript",
+    "sh" to "application/x-sh", "sql" to "text/x-sql", "tex" to "text/x-tex",
+)
+
 data class MailInlineImage(val mimeType: String, val base64: String)
 
 data class MailBody(
@@ -808,7 +826,7 @@ object OutlookImap {
         val isAttachment = runCatching { part.disposition }.getOrNull()?.equals(Part.ATTACHMENT, ignoreCase = true) == true ||
             (filename != null && !part.isMimeType("text/plain") && !part.isMimeType("text/html"))
         if (isAttachment && filename != null) {
-            out.attachments.add(MailAttachment(sanitizeFilename(filename), part.contentType.substringBefore(';').trim(), runCatching { part.size.toLong() }.getOrDefault(-1L), path))
+            out.attachments.add(MailAttachment(sanitizeFilename(filename), fileType(filename, part.contentType), runCatching { part.size.toLong() }.getOrDefault(-1L), path))
             return
         }
         if (out.html == null && part.isMimeType("text/html")) {

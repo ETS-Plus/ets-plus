@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -273,13 +274,22 @@ fun ZoomableBox(modifier: Modifier = Modifier, content: @Composable BoxScope.() 
                     awaitFirstDown(requireUnconsumed = false)
                     do {
                         val event = awaitPointerEvent()
+
+                        fun bounded(o: Offset, s: Float) = Offset(
+                            o.x.coerceIn(-(s - 1) * size.width / 2, (s - 1) * size.width / 2),
+                            o.y.coerceIn(-(s - 1) * size.height / 2, (s - 1) * size.height / 2),
+                        )
                         if (event.changes.size >= 2) {
                             val newScale = (scale * event.calculateZoom()).coerceIn(1f, 5f)
+
+                            val centre = Offset(size.width / 2f, size.height / 2f)
+                            val fingers = event.calculateCentroid(useCurrent = true) - centre
+                            val grown = fingers - (fingers - offset) * (newScale / scale) + event.calculatePan()
                             scale = newScale
-                            offset = if (newScale <= 1f) Offset.Zero else offset + event.calculatePan()
+                            offset = if (newScale <= 1f) Offset.Zero else bounded(grown, newScale)
                             event.changes.forEach { it.consume() }
                         } else if (scale > 1f) {
-                            offset += event.calculatePan()
+                            offset = bounded(offset + event.calculatePan(), scale)
                             event.changes.forEach { it.consume() }
                         }
                     } while (event.changes.any { it.pressed })

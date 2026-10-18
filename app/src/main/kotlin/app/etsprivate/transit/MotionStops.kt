@@ -10,5 +10,5 @@ object MotionStops {
     }
 
     private const val RIDING_RMS = 0.25
-    private const val WALKING_RMS = 2.2
+    const val WALKING_RMS = 2.2
 }

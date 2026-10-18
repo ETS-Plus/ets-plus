@@ -984,8 +984,11 @@ internal fun LegChip(leg: Milestone) {
     }
 }
 
+private val HERE_NAMES = setOf("Ma position", "My position")
+
 internal suspend fun Place.refreshedIfHere(context: android.content.Context, myPositionLabel: String): Place =
-    if (lieuId == null && name == myPositionLabel) {
+
+    if (lieuId == null && (name == myPositionLabel || name in HERE_NAMES)) {
         CurrentPosition.place(context, myPositionLabel) ?: this
     } else {
         this

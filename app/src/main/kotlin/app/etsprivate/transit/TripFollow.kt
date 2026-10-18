@@ -197,7 +197,7 @@ object TripFollowWork : PluginService {
         shakeCount = 0
         lastRms = rms
         lastFeel = MotionStops.feel(rms)
-        tracker?.onFeel(now, lastFeel)
+        tracker?.onShake(now, rms)
     }
 
     private suspend fun askAboutTheBus() {

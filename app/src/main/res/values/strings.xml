@@ -9,6 +9,7 @@
     <string name="action_previous">Previous</string>
     <string name="action_next">Next</string>
     <string name="action_copy_link">Copy the link</string>
+    <string name="action_open">Open</string>
     <string name="action_open_in_browser">Open in the browser</string>
     <string name="action_share_text">Share as text</string>
     <string name="action_share_image">Share as image</string>

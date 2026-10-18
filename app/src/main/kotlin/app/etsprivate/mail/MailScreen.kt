@@ -107,6 +107,8 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.ui.focus.FocusRequester
@@ -527,13 +529,13 @@ private fun MailScreenBody(
     val markedUnreadMessage = stringResource(R.string.mail_action_marked_unread)
     val undoLabel = stringResource(R.string.action_undo)
 
-    suspend fun handleAuthFailure() {
+    suspend fun handleAuthFailure() = withContext(kotlinx.coroutines.NonCancellable) {
         val refresh = currentTokens.refreshToken
         if (refresh == null) {
             status = sessionExpiredMessage
             TokenStore.clear(context, ACCOUNT)
             tokens = null
-            return
+            return@withContext
         }
         try {
             val refreshed = MicrosoftOAuth.refresh(MicrosoftOAuth.MAIL, refresh)
@@ -622,6 +624,8 @@ private fun MailScreenBody(
         } catch (e: OutlookImap.AuthException) {
             handleAuthFailure()
             return false
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             android.util.Log.w("MailFail", "load failed (attempt $attempt)", e)
 
@@ -649,8 +653,12 @@ private fun MailScreenBody(
     LaunchedEffect(currentTokens, currentFolder) {
         loading = true
         status = null
-        refreshMessages()
-        loading = false
+
+        try {
+            refreshMessages()
+        } finally {
+            loading = false
+        }
         refreshUnread()
     }
     LaunchedEffect(currentTokens, folderOrder) { refreshUnread() }
@@ -684,6 +692,9 @@ private fun MailScreenBody(
                     } catch (e: OutlookImap.AuthException) {
                         handleAuthFailure()
                         false
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        loadingMore = false
+                        throw e
                     } catch (e: Exception) {
                         false
                     }
@@ -1589,8 +1600,10 @@ private fun MessageRow(
         enableDismissFromStartToEnd = rightAction != MailSwipeAction.NONE,
         enableDismissFromEndToStart = leftAction != MailSwipeAction.NONE,
         backgroundContent = {
-            val action = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) rightAction else leftAction
-            SwipeActionBackground(action, dismissState.dismissDirection, armed)
+            if (dismissState.dismissDirection != SwipeToDismissBoxValue.Settled) {
+                val action = if (dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd) rightAction else leftAction
+                SwipeActionBackground(action, dismissState.dismissDirection, armed)
+            }
         },
     ) {
         MessageRowContent(message, selected, highlighted, selectionMode, busy, onClick, onLongClick, onStar, highlight)
@@ -2621,7 +2634,7 @@ private fun AddressRow(label: String, address: MailAddress) {
 }
 
 internal fun isPreviewable(mimeType: String) =
-    mimeType.startsWith("image/") || mimeType == "application/pdf" || isMedia(mimeType)
+    mimeType.startsWith("image/") || mimeType == "application/pdf" || isMedia(mimeType) || isText(mimeType)
 
 internal fun isMedia(mimeType: String) = mimeType.startsWith("video/") || mimeType.startsWith("audio/")
 
@@ -2646,6 +2659,7 @@ private fun AttachmentsSection(
     val savedMessage = stringResource(R.string.mail_attachment_saved)
     val saveFailedMessage = stringResource(R.string.mail_attachment_save_failed)
     val requiresAndroid10Message = stringResource(R.string.mail_attachment_requires_android10)
+    val openLabel = stringResource(R.string.action_open)
 
     var openingPath by remember { mutableStateOf<String?>(null) }
     var savingPath by remember { mutableStateOf<String?>(null) }
@@ -2702,7 +2716,7 @@ private fun AttachmentsSection(
                                 saveAttachmentToDownloads(
                                     context, email, accessToken, folder, uid, attachment,
                                     onLoadingChange = { savingPath = if (it) attachment.path else null },
-                                    savedMessage, saveFailedMessage, requiresAndroid10Message,
+                                    savedMessage, saveFailedMessage, requiresAndroid10Message, openLabel, onPreview,
                                 )
                             }
                         },
@@ -2729,11 +2743,7 @@ private suspend fun openOrPreviewAttachment(
     onLoadingChange(true)
     try {
         val (filename, bytes) = withContext(Dispatchers.IO) { OutlookImap.downloadAttachment(email, accessToken, folder, uid, attachment.path) }
-        if (isPreviewable(attachment.mimeType)) {
-            onPreview(filename, attachment.mimeType, bytes)
-        } else {
-            withContext(Dispatchers.IO) { openWithSystemViewer(context, filename, attachment.mimeType, bytes) }
-        }
+        showFile(context, filename, fileType(filename, attachment.mimeType), bytes, onPreview)
     } catch (e: Exception) {
         AppFeedback.show(saveFailedMessage)
     } finally {
@@ -2752,14 +2762,19 @@ private suspend fun saveAttachmentToDownloads(
     savedMessage: String,
     saveFailedMessage: String,
     requiresAndroid10Message: String,
+    openLabel: String,
+    onPreview: (filename: String, mimeType: String, bytes: ByteArray) -> Unit,
 ) {
     onLoadingChange(true)
+    var open: (() -> Unit)? = null
     val toastMessage = try {
         val (filename, bytes) = withContext(Dispatchers.IO) { OutlookImap.downloadAttachment(email, accessToken, folder, uid, attachment.path) }
+        val type = fileType(filename, attachment.mimeType)
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
             requiresAndroid10Message
         } else {
-            val saved = withContext(Dispatchers.IO) { AttachmentSaver.saveToDownloads(context, filename, attachment.mimeType, bytes) }
+            val saved = withContext(Dispatchers.IO) { AttachmentSaver.saveToDownloads(context, filename, type, bytes) }
+            if (saved) open = { showFile(context, filename, type, bytes, onPreview) }
             if (saved) savedMessage else saveFailedMessage
         }
     } catch (e: Exception) {
@@ -2767,7 +2782,17 @@ private suspend fun saveAttachmentToDownloads(
     } finally {
         onLoadingChange(false)
     }
-    AppFeedback.show(toastMessage)
+    AppFeedback.show(toastMessage, open?.let { openLabel }, open)
+}
+
+private fun showFile(
+    context: android.content.Context,
+    filename: String,
+    mimeType: String,
+    bytes: ByteArray,
+    onPreview: (filename: String, mimeType: String, bytes: ByteArray) -> Unit,
+) {
+    if (isPreviewable(mimeType)) onPreview(filename, mimeType, bytes) else openWithSystemViewer(context, filename, mimeType, bytes)
 }
 
 internal fun formatAttachmentSize(bytes: Long): String = when {
@@ -2795,14 +2820,20 @@ internal fun AttachmentPreviewScreen(filename: String, mimeType: String, bytes: 
     val context = LocalContext.current
     val savedMessage = stringResource(R.string.mail_attachment_saved)
     val saveFailedMessage = stringResource(R.string.mail_attachment_save_failed)
+    val openLabel = stringResource(R.string.action_open)
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         AppTopBar(title = filename, onBack = onBack, actions = {
             IconButton(onClick = {
                 scope.launch {
-                    val saved = withContext(Dispatchers.IO) { AttachmentSaver.saveToDownloads(context, filename, mimeType, bytes) }
-                    AppFeedback.show(if (saved) savedMessage else saveFailedMessage)
+                    val saved = withContext(Dispatchers.IO) { AttachmentSaver.save(context, filename, mimeType, bytes) }
+
+                    if (saved != null) {
+                        AppFeedback.show(savedMessage, openLabel) { AttachmentSaver.open(context, saved, mimeType) }
+                    } else {
+                        AppFeedback.show(saveFailedMessage)
+                    }
                 }
             }) {
                 Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.mail_attachment_saved))
@@ -2812,6 +2843,7 @@ internal fun AttachmentPreviewScreen(filename: String, mimeType: String, bytes: 
             when {
                 mimeType == "application/pdf" -> PdfPreview(bytes)
                 isMedia(mimeType) -> MediaPreview(filename, mimeType, bytes)
+                isText(mimeType) -> TextPreview(filename, mimeType, bytes)
                 else -> ImagePreview(bytes)
             }
         }
@@ -2947,6 +2979,7 @@ private fun ImagePreview(bytes: ByteArray) {
 private fun PdfPreview(bytes: ByteArray) {
     val context = LocalContext.current
     var pages by remember(bytes) { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var pageCount by remember(bytes) { mutableStateOf(0) }
     var failed by remember(bytes) { mutableStateOf(false) }
 
     LaunchedEffect(bytes) {
@@ -2958,6 +2991,7 @@ private fun PdfPreview(bytes: ByteArray) {
                     file.writeBytes(bytes)
                     ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                         PdfRenderer(pfd).use { renderer ->
+                            withContext(Dispatchers.Main) { pageCount = renderer.pageCount }
                             for (index in 0 until renderer.pageCount) {
                                 val bitmap = renderer.openPage(index).use { page ->
                                     Bitmap.createBitmap(page.width * 2, page.height * 2, Bitmap.Config.ARGB_8888).also {
@@ -2987,15 +3021,102 @@ private fun PdfPreview(bytes: ByteArray) {
         )
 
         pages.isEmpty() -> if (rememberDelayedLoading(true)) FullScreenLoading()
-        else -> ZoomableBox(modifier = Modifier.fillMaxSize().background(Color.White)) {
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(pages) { page ->
-                    Image(page.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxWidth().padding(4.dp), contentScale = ContentScale.FillWidth)
+        else -> Column(modifier = Modifier.fillMaxSize()) {
+            val pager = androidx.compose.foundation.pager.rememberPagerState { maxOf(pageCount, pages.size) }
+            val settle = androidx.compose.animation.core.spring(
+                dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow,
+                visibilityThreshold = 0.5f,
+            )
+            val fling = androidx.compose.foundation.pager.PagerDefaults.flingBehavior(
+                state = pager,
+                snapPositionalThreshold = 0.3f,
+                snapAnimationSpec = settle,
+            )
+            androidx.compose.foundation.pager.VerticalPager(
+                state = pager,
+                flingBehavior = fling,
+                beyondViewportPageCount = 1,
+                modifier = Modifier.fillMaxWidth().weight(1f).background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                key = { it },
+            ) { index ->
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    val page = pages.getOrNull(index)
+                    if (page == null) {
+                        CircularProgressIndicator()
+                    } else {
+                        ZoomableBox(modifier = Modifier.fillMaxSize()) {
+                            Image(
+                                page.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxWidth().align(Alignment.Center),
+                                contentScale = ContentScale.FillWidth,
+                            )
+                        }
+                    }
                 }
+            }
+            if (pager.pageCount > 1) {
+                val scope = rememberCoroutineScope()
+                PageBar(
+                    page = pager.currentPage + 1,
+                    total = pager.pageCount,
+                    onPrevious = { scope.launch { pager.animateScrollToPage(pager.currentPage - 1, animationSpec = settle) } },
+                    onNext = { scope.launch { pager.animateScrollToPage(pager.currentPage + 1, animationSpec = settle) } },
+                )
             }
         }
     }
 }
+
+@Composable
+private fun PageBar(page: Int, total: Int, onPrevious: () -> Unit, onNext: () -> Unit) {
+    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.half),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "$page / $total",
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.padding(horizontal = Spacing.oneHalf),
+        )
+        Spacer(modifier = Modifier.weight(1f))
+        IconButton(onClick = onPrevious, enabled = page > 1) {
+            Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = stringResource(R.string.action_previous))
+        }
+        IconButton(onClick = onNext, enabled = page < total) {
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = stringResource(R.string.action_next))
+        }
+    }
+}
+
+@Composable
+private fun TextPreview(filename: String, mimeType: String, bytes: ByteArray) {
+    val text = remember(bytes) {
+        val raw = String(bytes, Charsets.UTF_8).removePrefix("\uFEFF")
+        val json = mimeType.endsWith("json") || filename.endsWith(".json", ignoreCase = true)
+        if (!json) raw else runCatching {
+            val trimmed = raw.trim()
+            if (trimmed.startsWith("[")) org.json.JSONArray(trimmed).toString(2) else org.json.JSONObject(trimmed).toString(2)
+        }.getOrDefault(raw)
+    }
+    val code = !mimeType.startsWith("text/plain") && !mimeType.startsWith("text/markdown")
+    androidx.compose.foundation.text.selection.SelectionContainer(
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface),
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyMedium,
+            fontFamily = if (code) FontFamily.Monospace else null,
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(Spacing.double),
+        )
+    }
+}
+
+internal fun isText(mimeType: String) =
+    mimeType.startsWith("text/") && mimeType != "text/html" ||
+        mimeType in setOf("application/json", "application/xml", "application/x-yaml", "application/yaml", "application/toml", "application/x-sh", "application/javascript")
 
 @Composable
 private fun linkedText(raw: String, onLink: (String) -> Unit): androidx.compose.ui.text.AnnotatedString {

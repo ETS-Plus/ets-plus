@@ -9,6 +9,7 @@
     <string name="action_previous">Précédent</string>
     <string name="action_next">Suivant</string>
     <string name="action_copy_link">Copier le lien</string>
+    <string name="action_open">Ouvrir</string>
     <string name="action_open_in_browser">Ouvrir dans le navigateur</string>
     <string name="action_share_text">Partager en texte</string>
     <string name="action_share_image">Partager en image</string>

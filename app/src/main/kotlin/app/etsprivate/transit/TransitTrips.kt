@@ -28,7 +28,7 @@ object SavedTrips {
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
     fun load(context: Context): List<SavedTrip> = runCatching {
-        val raw = prefs(context).getString(KEY, null) ?: return emptyList()
+        val raw = prefs(context).getString(KEY, null) ?: return listOf(toSchool(context))
 
         if (!prefs(context).contains(BACKUP_KEY)) prefs(context).edit().putString(BACKUP_KEY, raw).apply()
         val array = JSONArray(raw)
@@ -80,6 +80,11 @@ object SavedTrips {
         save(context, updated)
         return updated
     }
+
+    private fun toSchool(context: Context) = SavedTrip(
+        Place(Plug.resources(context).getString(app.etsprivate.R.string.transit_my_position), lieuId = null, lat = null, lng = null),
+        Place("ETS, Pavillon A, Rue William, Montréal, QC, Canada", lieuId = "ChIJU4_0wfIbyUwRz0kGq6rQtxs", lat = null, lng = null),
+    )
 
     private fun placeToJson(p: Place) = JSONObject()
         .put("name", p.name)

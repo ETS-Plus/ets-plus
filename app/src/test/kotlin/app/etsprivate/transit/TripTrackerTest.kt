@@ -11,6 +11,9 @@ import kotlin.math.cos
 private const val LAT = 45.5
 private const val LNG = -73.57
 
+private const val STILL = 0.1
+private const val RUNNING = 0.9
+
 internal fun at(east: Double, north: Double) =
     LatLng(LAT + north / 111_195.0, LNG + east / (111_195.0 * cos(Math.toRadians(LAT))))
 
@@ -172,12 +175,12 @@ class TripTrackerTest {
         val line = decodePolyline("qkutGfp_`MCDmU}V?AcXgSmA_AgUyP[Ug_@zZ")
         tracker.onFix(fix(line.first(), 0), start)
         var now = start
-        fun feel(seconds: Int, f: MotionStops.Feel) = repeat(seconds) { now += 1000; tracker.onFeel(now, f); tracker.onTick(now) }
-        feel(12, MotionStops.Feel.STILL)
-        feel(8, MotionStops.Feel.RIDING)
+        fun shake(seconds: Int, rms: Double) = repeat(seconds) { now += 1000; tracker.onShake(now, rms); tracker.onTick(now) }
+        shake(12, STILL)
+        shake(20, RUNNING)
         assertTrue(tracker.state.railMoving)
-        feel(60, MotionStops.Feel.RIDING)
-        feel(6, MotionStops.Feel.STILL)
+        shake(60, RUNNING)
+        shake(6, STILL)
         assertEquals(1, tracker.state.railStation)
         assertEquals(1, tracker.state.stationsCounted)
     }
@@ -191,10 +194,23 @@ class TripTrackerTest {
         repeat(30) { i ->
             now += 1000
             if (i % 3 == 0) tracker.onFix(fix(line.first(), now / 1000, accuracy = 15f, provider = "network"), now)
-            tracker.onFeel(now, MotionStops.Feel.RIDING)
+            tracker.onShake(now, RUNNING)
             tracker.onTick(now)
         }
         assertEquals(false, tracker.state.railMoving)
+    }
+
+    @Test fun standingOnAPlatformWithNoWifiIsNotLeaving() {
+        val start = 1_000_000L
+        val tracker = metroTrip(departure = start / 1000 + 600)
+        val line = decodePolyline("qkutGfp_`MCDmU}V?AcXgSmA_AgUyP[Ug_@zZ")
+        tracker.onFix(fix(line.first(), 0), start)
+        var now = start
+
+        val platform = listOf(0.47, 0.38, 0.74, 0.58, 0.49, 0.37, 0.27, 0.50, 0.58, 0.35, 0.63, 0.50, 0.62, 0.20, 0.61, 1.30, 0.44, 0.34, 0.42, 1.39)
+        repeat(240) { i -> now += 1000; tracker.onShake(now, platform[i % platform.size]); tracker.onTick(now) }
+        assertEquals(false, tracker.state.railMoving)
+        assertEquals(0, tracker.state.railStation)
     }
 
     @Test fun aLateFixFromTheStationJustLeftDoesNotStopTheTrain() {
@@ -203,8 +219,8 @@ class TripTrackerTest {
         val line = decodePolyline("qkutGfp_`MCDmU}V?AcXgSmA_AgUyP[Ug_@zZ")
         tracker.onFix(fix(line.first(), 0), start)
         var now = start
-        repeat(12) { now += 1000; tracker.onFeel(now, MotionStops.Feel.STILL); tracker.onTick(now) }
-        repeat(8) { now += 1000; tracker.onFeel(now, MotionStops.Feel.RIDING); tracker.onTick(now) }
+        repeat(12) { now += 1000; tracker.onShake(now, STILL); tracker.onTick(now) }
+        repeat(20) { now += 1000; tracker.onShake(now, RUNNING); tracker.onTick(now) }
         assertTrue(tracker.state.railMoving)
         tracker.onFix(fix(line.first(), now / 1000, accuracy = 20f, provider = "network"), now)
         assertTrue(tracker.state.railMoving)

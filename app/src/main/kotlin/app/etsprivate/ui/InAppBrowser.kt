@@ -360,12 +360,7 @@ fun InAppBrowser(url: String, onBack: () -> Unit, visible: Boolean = true) {
 
 private class MediaStream(val name: String, val mimeType: String, val url: String, val headers: Map<String, String>)
 
-private fun typeOf(name: String, served: String?): String {
-    val given = served.orEmpty().substringBefore(';').trim()
-    if (given.isNotBlank() && given != "application/octet-stream" && given != "application/force-download") return given
-    return android.webkit.MimeTypeMap.getSingleton()
-        .getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
-}
+private fun typeOf(name: String, served: String?): String = app.etsprivate.mail.fileType(name, served)
 
 @Composable
 private fun MediaStreamScreen(media: MediaStream, onBack: () -> Unit) {
@@ -374,6 +369,7 @@ private fun MediaStreamScreen(media: MediaStream, onBack: () -> Unit) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val saved = stringResource(R.string.mail_attachment_saved)
     val failed = stringResource(R.string.mail_attachment_save_failed)
+    val openLabel = stringResource(R.string.action_open)
     var saving by remember { mutableStateOf(false) }
     Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
         AppTopBar(title = media.name, onBack = onBack, actions = {
@@ -385,11 +381,15 @@ private fun MediaStreamScreen(media: MediaStream, onBack: () -> Unit) {
                         val ok = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                             runCatching {
                                 val (name, type, bytes) = fetchFile(media.url, media.headers["User-Agent"], null, media.mimeType)
-                                app.etsprivate.mail.AttachmentSaver.saveToDownloads(context, name, type, bytes)
-                            }.getOrDefault(false)
+                                app.etsprivate.mail.AttachmentSaver.save(context, name, type, bytes)?.let { it to type }
+                            }.getOrNull()
                         }
                         saving = false
-                        AppFeedback.show(if (ok) saved else failed)
+                        if (ok != null) {
+                            AppFeedback.show(saved, openLabel) { app.etsprivate.mail.AttachmentSaver.open(context, ok.first, ok.second) }
+                        } else {
+                            AppFeedback.show(failed)
+                        }
                     }
                 },
             ) {

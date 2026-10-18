@@ -99,6 +99,10 @@ class TripTracker(legs: List<TrackedLeg>) {
     private var lastGoodAt = 0L
     private var legReachedAt = 0L
 
+    private var busLeftAt: Long? = null
+
+    private var bestToEnd = Double.MAX_VALUE
+
     private var moveAway = 0
     private var lastAwayDistance = 0.0
 
@@ -139,24 +143,31 @@ class TripTracker(legs: List<TrackedLeg>) {
         val accuracy = fix.accuracy ?: 0f
 
         if (legs[leg].isRail && accuracy > RAIL_WORST_ACCURACY) return
+        val moving = (fix.speed ?: 0f) > BOARDED_SPEED || steadySince(now) != null
 
-        val match = when {
-            mode == TrackMode.WAITING -> earliest(0, segments.size, position, accuracy)
-            mode == TrackMode.OFF_ROUTE -> confirmed(earliest(segmentAt(travelled() - BACKTRACK_METERS), segments.size, position, accuracy))
+        val match = boardable(
+            when {
+                mode == TrackMode.WAITING -> earliest(0, segments.size, position, accuracy)
+                mode == TrackMode.OFF_ROUTE -> confirmed(earliest(segmentAt(travelled() - BACKTRACK_METERS), segments.size, position, accuracy))
 
-            estimated -> closest(firstSegment[leg], lastSegment[windowEndLeg()] + 1, position, accuracy)
-            else -> windowed(position, accuracy)
-        }
+                estimated -> closest(firstSegment[leg], lastSegment[windowEndLeg()] + 1, position, accuracy)
+                else -> windowed(position, accuracy)
+            },
+            position,
+            accuracy,
+            moving,
+        )
         offLine = match?.off ?: nearestOff(position)
 
         if (match == null) {
-            movingAway(position, fix.speed)
+            if (!gotOff(position, fix.speed, now) && !ownWay(position, now)) movingAway(position, fix.speed)
             return
         }
         moveAway = 0
         lastAwayDistance = 0.0
         lastGood = position
         lastGoodAt = now
+        if (!legs[leg].isTransit) bestToEnd = min(bestToEnd, distanceMeters(position, legs[leg].points.last()))
 
         if (!estimated && mode != TrackMode.WAITING && match.travelled < travelled()) {
             why = "held"
@@ -170,7 +181,23 @@ class TripTracker(legs: List<TrackedLeg>) {
         }
         moveTo(match, now)
         estimated = false
-        mode = if (leg == legs.lastIndex && travelled() >= total - FINISH_METERS) TrackMode.FINISHED else TrackMode.ON_ROUTE
+
+        if (legs[leg].isTransit && !legs[leg].isRail && busLeftAt == null &&
+            ((fix.speed ?: 0f) > BOARDED_SPEED || distanceMeters(position, legs[leg].points.first()) > WAITING_AREA_METERS)
+        ) {
+            busLeftAt = now
+        }
+
+        if (legs[leg].isTransit && !legs[leg].isRail && busLeftAt == null) {
+            along = 0.0
+            segment = firstSegment[leg]
+        }
+        mode = when {
+            leg == legs.lastIndex && (travelled() >= total - FINISH_METERS || distanceMeters(position, legs[leg].points.last()) <= ARRIVED_METERS) -> TrackMode.FINISHED
+
+            legs[leg].isRail && mode == TrackMode.UNDERGROUND && fix.provider != "gps" -> TrackMode.UNDERGROUND
+            else -> TrackMode.ON_ROUTE
+        }
         why = "on-line"
 
         val rail = legs[leg]
@@ -179,10 +206,7 @@ class TripTracker(legs: List<TrackedLeg>) {
             if (abs(rail.stations[station] - along) <= max(STATION_SNAP_METERS, accuracy.toDouble())) {
                 along = rail.stations[station]
                 segment = segmentAt(legStart[leg] + along)
-                if (station != railStation || railMoving) {
-                    railSince = now
-                    ridingSince = null
-                }
+                if (station != railStation || railMoving) railSince = now
                 railStation = station
                 railMoving = false
                 why = "at-station"
@@ -194,6 +218,8 @@ class TripTracker(legs: List<TrackedLeg>) {
         if (match.leg != leg || mode == TrackMode.WAITING) {
             legReachedAt = now
             stationsCounted = 0
+            busLeftAt = null
+            bestToEnd = Double.MAX_VALUE
             boardRail(match.leg, match.alongInLeg, now)
         }
         segment = match.segment
@@ -256,6 +282,58 @@ class TripTracker(legs: List<TrackedLeg>) {
         return candidate.takeIf { abs(it.travelled - previous.travelled) < CONFIRM_METERS }
     }
 
+    private fun boardable(match: Match?, position: LatLng, accuracy: Float, moving: Boolean): Match? {
+        if (match == null || match.leg == leg && mode != TrackMode.WAITING || moving) return match
+        val ride = legs[match.leg]
+        if (!ride.isTransit || ride.isRail || legs.getOrNull(match.leg - 1)?.isTransit != false) return match
+        if (match.alongInLeg <= max(STOP_REACH_METERS, accuracy.toDouble())) return match
+        val walk = match.leg - 1
+        return closest(firstSegment[walk], lastSegment[walk] + 1, position, accuracy)
+            ?: match.takeIf { it.alongInLeg > HANDOFF_METERS }
+    }
+
+    private fun ownWay(position: LatLng, now: Long): Boolean {
+        val walk = legs[leg]
+        if (walk.isTransit || mode == TrackMode.WAITING) return false
+        val toEnd = distanceMeters(position, walk.points.last())
+        if (toEnd > walk.length + OWN_WAY_SLACK_METERS || toEnd > bestToEnd + OWN_WAY_NOISE_METERS) return false
+        bestToEnd = min(bestToEnd, toEnd)
+        moveAway = 0
+        lastAwayDistance = 0.0
+        lastGood = position
+        lastGoodAt = now
+        along = max(along, (walk.length - toEnd).coerceIn(0.0, walk.length))
+        segment = segmentAt(legStart[leg] + along)
+        estimated = false
+        mode = if (leg == legs.lastIndex && toEnd <= ARRIVED_METERS) TrackMode.FINISHED else TrackMode.ON_ROUTE
+        why = "own-way"
+        return true
+    }
+
+    private fun gotOff(position: LatLng, speed: Float?, now: Long): Boolean {
+        val ride = legs[leg]
+        val walk = legs.getOrNull(leg + 1) ?: return false
+
+        if (!ride.isTransit || ride.isRail || walk.isTransit || mode == TrackMode.WAITING || busLeftAt == null) return false
+        val atEnd = ride.length - along <= ARRIVING_METERS && distanceMeters(position, ride.points.last()) <= ARRIVING_METERS
+        if ((speed ?: 0f) > BOARDED_SPEED || !atEnd && !walkingNow(now)) return false
+        leg += 1
+        along = 0.0
+        segment = firstSegment[leg]
+        legReachedAt = now
+        busLeftAt = null
+        bestToEnd = Double.MAX_VALUE
+        stationsCounted = 0
+        estimated = false
+        mode = TrackMode.ON_ROUTE
+        why = "got-off"
+        moveAway = 0
+        lastAwayDistance = 0.0
+        lastGoodAt = now
+        ownWay(position, now)
+        return true
+    }
+
     private fun project(index: Int, position: LatLng): Match {
         val s = segments[index]
         val (point, fraction) = nearestOnSegment(s.a, s.b, position)
@@ -283,6 +361,10 @@ class TripTracker(legs: List<TrackedLeg>) {
 
     private fun movingAway(position: LatLng, speed: Float?) {
         if (mode == TrackMode.WAITING || mode == TrackMode.OFF_ROUTE) return
+
+        val ride = legs[leg]
+        val departed = if (ride.isRail) railMoving || railStation > 0 else busLeftAt != null
+        if (ride.isTransit && !departed && distanceMeters(position, ride.points.first()) <= WAITING_AREA_METERS) return
         val here = pointAtMeters(legs[leg].points, along) ?: return
         val distance = distanceMeters(here, position)
         if (abs(distance - lastAwayDistance) < 0.01) return
@@ -314,8 +396,9 @@ class TripTracker(legs: List<TrackedLeg>) {
             riding.isRail -> Unit
             riding.isTransit && sinceFix > BUS_CLOCK_MS -> {
                 val span = legSpanMs(riding)
-                if (span > 0 && legReachedAt > 0) {
-                    val byClock = riding.length * min((now - legReachedAt).toDouble() / span, NEARLY_THERE)
+                val left = busLeftAt
+                if (span > 0 && left != null) {
+                    val byClock = riding.length * min((now - left).toDouble() / span, NEARLY_THERE)
                     if (byClock > along) along = byClock
                     segment = segmentAt(legStart[leg] + along)
                     estimated = true
@@ -342,7 +425,7 @@ class TripTracker(legs: List<TrackedLeg>) {
         estimated = true
         val stations = rail.stations
 
-        if (!railMoving && railStation < stations.lastIndex && now - max(railSince, lastGoodAt) > QUIET_MEANS_LEFT_MS) {
+        if (!feelsMotion(now) && !railMoving && railStation < stations.lastIndex && now - max(railSince, lastGoodAt) > QUIET_MEANS_LEFT_MS) {
             railMoving = true
             railSince = max(railSince, lastGoodAt) + QUIET_MEANS_LEFT_MS / 2
         }
@@ -369,11 +452,12 @@ class TripTracker(legs: List<TrackedLeg>) {
         val to = stations[railStation + 1]
         val stretch = segmentTimeMs(rail, railStation)
         val elapsed = now - railSince
-        if (elapsed >= stretch + ARRIVAL_GRACE_MS) {
+
+        val stillRunning = steadySince(now) != null && elapsed < 2 * stretch + ARRIVAL_GRACE_MS
+        if (elapsed >= stretch + ARRIVAL_GRACE_MS && !stillRunning) {
             railStation += 1
             railMoving = false
             railSince = railSince + stretch
-            ridingSince = null
             along = to
             why = "arrived-by-clock"
         } else {
@@ -391,30 +475,40 @@ class TripTracker(legs: List<TrackedLeg>) {
         return (span * share).toLong().coerceAtLeast(MIN_STRETCH_MS)
     }
 
-    private var ridingSince: Long? = null
+    private val shakes = ArrayDeque<Pair<Long, Double>>()
     private var stillSince: Long? = null
 
-    fun onFeel(now: Long, feel: MotionStops.Feel) {
-        when (feel) {
-            MotionStops.Feel.RIDING -> {
-                if (ridingSince == null) ridingSince = now
-                stillSince = null
-            }
-            MotionStops.Feel.STILL -> {
-                if (stillSince == null) stillSince = now
-                ridingSince = null
-            }
-            MotionStops.Feel.WALKING -> {
-                ridingSince = null
-                stillSince = null
-            }
+    private fun feelsMotion(now: Long) = shakes.lastOrNull()?.let { now - it.first <= MOTION_FRESH_MS } == true
+
+    private fun steadySince(now: Long): Long? {
+        if (shakes.size < STEADY_SECONDS || !feelsMotion(now)) return null
+        val first = shakes.first().first
+        if (now - first > (STEADY_SECONDS + 2) * 1000L) return null
+        val calm = shakes.map { it.second }.filter { it < MotionStops.WALKING_RMS }
+        if (calm.size < STEADY_SECONDS - STEADY_JOLTS) return null
+        if (calm.count { it < STEADY_LEAST } > 1) return null
+        val median = calm.sorted()[calm.size / 2]
+        val change = calm.zipWithNext { a, b -> abs(a - b) }.sorted()[(calm.size - 1) / 2]
+        return first.takeIf { median >= STEADY_MEDIAN && change <= STEADY_CHANGE * median }
+    }
+
+    private fun walkingNow(now: Long): Boolean =
+        feelsMotion(now) && shakes.takeLast(10).count { MotionStops.feel(it.second) == MotionStops.Feel.WALKING } >= WALKING_SECONDS
+
+    fun onShake(now: Long, rms: Double) {
+        shakes.addLast(now to rms)
+        while (shakes.size > STEADY_SECONDS) shakes.removeFirst()
+        if (MotionStops.feel(rms) == MotionStops.Feel.STILL) {
+            if (stillSince == null) stillSince = now
+        } else {
+            stillSince = null
         }
-        if (legs.isEmpty()) return
+        if (legs.isEmpty() || mode == TrackMode.WAITING || mode == TrackMode.FINISHED) return
+        val steady = steadySince(now)
 
         val next = legs.getOrNull(leg + 1)
-        val riding = ridingSince
         if (!legs[leg].isRail && next?.isRail == true && legs[leg].length - along < STATION_REACH_METERS &&
-            riding != null && now - riding >= LEAVING_MS && now - lastGoodAt >= QUIET_AFTER_LEAVING_MS
+            steady != null && now - lastGoodAt >= QUIET_AFTER_LEAVING_MS
         ) {
             enterRail(lastGoodAt)
         }
@@ -422,11 +516,11 @@ class TripTracker(legs: List<TrackedLeg>) {
         if (!rail.isRail) return
         val stations = rail.stations
 
-        if (!railMoving && riding != null && riding >= railSince && now - riding >= LEAVING_MS &&
+        if (!railMoving && steady != null && steady >= railSince &&
             now - lastGoodAt >= QUIET_AFTER_LEAVING_MS && (stations.size < 2 || railStation < stations.lastIndex)
         ) {
             railMoving = true
-            railSince = riding
+            railSince = steady
             if (mode == TrackMode.UNDERGROUND) placeUnderground(now)
             return
         }
@@ -464,8 +558,28 @@ class TripTracker(legs: List<TrackedLeg>) {
         const val QUIET_MEANS_LEFT_MS = 40_000L
         const val ARRIVAL_GRACE_MS = 10_000L
         const val MIN_STRETCH_MS = 45_000L
-        const val LEAVING_MS = 6_000L
         const val QUIET_AFTER_LEAVING_MS = 10_000L
+        const val STEADY_SECONDS = 20
+        const val STEADY_LEAST = 0.3
+        const val STEADY_MEDIAN = 0.6
+        const val STEADY_JOLTS = 3
+
+        const val STEADY_CHANGE = 0.2
+
+        const val WALKING_SECONDS = 7
+        const val MOTION_FRESH_MS = 5_000L
+
+        const val BOARDED_SPEED = 4f
+
+        const val STOP_REACH_METERS = 25.0
+        const val WAITING_AREA_METERS = 150.0
+        const val ARRIVING_METERS = 200.0
+
+        const val ARRIVED_METERS = 40.0
+
+        const val OWN_WAY_SLACK_METERS = 100.0
+
+        const val OWN_WAY_NOISE_METERS = 15.0
         const val STOPPED_MS = 5_000L
         const val SKY_LOST_MS = 20_000L
         const val BUS_CLOCK_MS = 30_000L
